@@ -1,0 +1,10 @@
+numpy
+scipy
+matplotlib
+astropy
+pyfftw
+scikit-learn
+scikit-image
+pyfits
+pyDOE
+GPy
