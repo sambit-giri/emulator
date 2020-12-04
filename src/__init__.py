@@ -1,11 +1,11 @@
 '''
-Emulate21cm is a Python package for emulation of 21 cm observables.
+Emulator is a Python package for constructing emulators.
 
 You can also get documentation for all routines directory from
 the interpreter using Python's built-in help() function.
 For example:
->>> import tools21cm as t2c
->>> help(t2c.calc_dt)
+>>> import emulator as emul
+>>> help(emul.GPRemul)
 '''
 
 import sys
@@ -17,7 +17,7 @@ from . import corner
 from . import sampling_space
 from . import gaussian_process
 from . import neural_networks
-from .emulate import *
+from .sim2emul import *
 
 #Suppress warnings from zero-divisions and nans
 import numpy
