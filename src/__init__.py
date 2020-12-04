@@ -15,7 +15,7 @@ from . import distances
 from . import bayesian_optimisation
 from . import corner
 from . import sampling_space
-from . import gaussian_process
+from .gaussian_process import *
 from . import neural_networks
 from .sim2emul import *
 
