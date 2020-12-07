@@ -118,7 +118,7 @@ class DenseNet(nn.Module):
 
     def prepare_model(self, input_dim, output_dim):
         modules = [nn.Linear(input_dim, self.d_layer[0])]
-        if self.batch_norm: modules.append(nn.BatchNorm1d(self.d_layer[i+1]))
+        if self.batch_norm: modules.append(nn.BatchNorm1d(self.d_layer[0]))
         if self.dropout: modules.append(nn.Dropout(self.dropout))
         modules.append(self.activation_func[0])
 
