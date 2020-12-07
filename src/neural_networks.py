@@ -156,8 +156,8 @@ class DenseNet(nn.Module):
             print('Found model which was run for {} epochs.'.format(epoch_start))
             print('To restart, run clear_model() before fitting.')
 
-
-        for t in range(epoch_start,self.epochs):
+        pbar = tqdm(range(epoch_start,self.epochs)) if self.verbose else range(epoch_start,self.epochs)
+        for t in pbar:
             # Forward pass: compute predicted y by passing x to the model. Module objects
             # override the __call__ operator so you can call them like functions. When
             # doing so you pass a Tensor of input data to the Module and it produces
@@ -169,8 +169,10 @@ class DenseNet(nn.Module):
             # loss.
             loss = self.loss_fn(y_pred, y_train)
             self.losses.append(loss.item())
-            if t % 100 == 99:
-                print(t, loss.item())
+            # if t % 100 == 99:
+            #     print(t+1, loss.item())
+            if self.verbose:
+                pbar.set_description("Epoch={0:} | loss={1:.3f}".format(t+1, loss.item()))
 
             # Zero the gradients before running the backward pass.
             self.model.zero_grad()
