@@ -16,7 +16,7 @@ from . import bayesian_optimisation
 from . import corner
 from . import sampling_space
 from .gaussian_process import *
-from . import neural_networks
+from .neural_networks import *
 from .sim2emul import *
 
 #Suppress warnings from zero-divisions and nans
