@@ -8,3 +8,7 @@ scikit-image
 pyfits
 pyDOE
 GPy
+
+torch
+torchvision 
+torchaudio

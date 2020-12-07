@@ -138,10 +138,14 @@ class DenseNet(nn.Module):
 
     def fit(self, X_train, y_train, epochs=None):
         if epochs is not None: self.epochs = epochs
-        if X_train.ndim<=1: X_train = X_train[:,None]
-        if y_train.ndim<=1: y_train = y_train[:,None]
-        X_train = X_train.astype(np.float32)
-        y_train = y_train.astype(np.float32)
+        if type(X_train)==np.ndarray:
+            if X_train.ndim<=1: X_train = X_train[:,None]
+            X_train = X_train.astype(np.float32)
+            X_train = torch.from_numpy(X_train)
+        if type(y_train)==np.ndarray:
+            if y_train.ndim<=1: y_train = y_train[:,None]
+            y_train = y_train.astype(np.float32)
+            y_train = torch.from_numpy(y_train)
 
         input_dim, output_dim = X_train.shape[1], y_train.shape[1]
         if self.model is None: 
