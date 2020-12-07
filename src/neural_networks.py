@@ -184,7 +184,7 @@ class DenseNet(nn.Module):
             # Update the weights using gradient descent. Each parameter is a Tensor, so
             # we can access its gradients like we did before.
             with torch.no_grad():
-                for param in model.parameters():
+                for param in self.model.parameters():
                     param -= self.learning_rate * param.grad
 
     def predict(self, X_test):
