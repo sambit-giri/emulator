@@ -188,8 +188,10 @@ class DenseNet(nn.Module):
                     param -= self.learning_rate * param.grad
 
     def predict(self, X_test):
-        if X_test.ndim<=1: X_test = X_test[:,None]
-        X_test = X_test.astype(np.float32)
+        if type(X_test)==np.ndarray:
+            if X_test.ndim<=1: X_test = X_test[:,None]
+            X_test = X_test.astype(np.float32)
+            X_test = torch.from_numpy(X_test)
         if self.model is None:
             print('Fit model before predicting.')
             return None
