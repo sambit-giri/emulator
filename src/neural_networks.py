@@ -92,7 +92,7 @@ except:
 
 class DenseNet(nn.Module):
     def __init__(self, d_layer, activation_func=None, epochs=1000, verbose=True, 
-                learning_rate=None, loss_fn=None, batch_norm=False, dropout=0.5
+                learning_rate=None, loss_fn=None, batch_norm=False, dropout=0.5,
                 optimizer='Adam'
                 ):
         super().__init__()
@@ -200,7 +200,7 @@ class DenseNet(nn.Module):
             # with torch.no_grad():
             #     for param in self.model.parameters():
             #         param -= self.learning_rate * param.grad
-            optimizer.step()
+            self.optimizer.step()
 
     def predict(self, X_test):
         if type(X_test)==np.ndarray:
