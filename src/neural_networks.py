@@ -1,10 +1,11 @@
 import numpy as np
-from sklearn.metrics import r2_score
 import pickle
 from . import helper_functions as hf
 from time import time
+from tqdm import tqdm
+
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score
 
 try: import tensorflow as tf
 except: print('Install Tensorflow to use prob_nn.')
