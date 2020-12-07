@@ -92,13 +92,17 @@ except:
 
 class DenseNet(nn.Module):
     def __init__(self, d_layer, activation_func=None, epochs=1000, verbose=True, 
-                learning_rate=None, loss_fn=None, batch_norm=False, dropout=0.5):
+                learning_rate=None, loss_fn=None, batch_norm=False, dropout=0.5
+                optimizer='Adam'
+                ):
         super().__init__()
         self.d_layer = d_layer
         self.epochs  = epochs
         self.verbose = verbose
         self.loss_fn = loss_fn if loss_fn is not None else nn.MSELoss(reduction='sum')
         self.learning_rate = learning_rate if learning_rate is not None else 1e-4
+        self.optimizer = optimizer if optimizer is not None else 'Adam' 
+
         self.batch_norm = batch_norm
         if 0<=dropout<=1:
             self.dropout = dropout
@@ -157,6 +161,13 @@ class DenseNet(nn.Module):
             print('Found model which was run for {} epochs.'.format(epoch_start))
             print('To restart, run clear_model() before fitting.')
 
+        if self.optimizer=='Adam':
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        if self.optimizer=='RMSprop':
+            self.optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.learning_rate)
+        if self.optimizer=='Adagrad':
+            self.optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate)
+
         pbar = tqdm(range(epoch_start,self.epochs)) if self.verbose else range(epoch_start,self.epochs)
         for t in pbar:
             # Forward pass: compute predicted y by passing x to the model. Module objects
@@ -186,9 +197,10 @@ class DenseNet(nn.Module):
 
             # Update the weights using gradient descent. Each parameter is a Tensor, so
             # we can access its gradients like we did before.
-            with torch.no_grad():
-                for param in self.model.parameters():
-                    param -= self.learning_rate * param.grad
+            # with torch.no_grad():
+            #     for param in self.model.parameters():
+            #         param -= self.learning_rate * param.grad
+            optimizer.step()
 
     def predict(self, X_test):
         if type(X_test)==np.ndarray:
