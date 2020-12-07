@@ -196,7 +196,7 @@ class DenseNet(nn.Module):
             print('Fit model before predicting.')
             return None
         y_pred = self.model(X_test)
-        return y_pred
+        return y_pred.cpu().data.numpy()
     
     def score(self, X_test, y_test, metric='r2'):
         y_pred = self.predict(X_test)
