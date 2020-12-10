@@ -259,7 +259,7 @@ class GPR_pyro:
 			self.kernel = gp.kernels.Matern32(input_dim, variance=None, lengthscale=None, active_dims=None)
 
 		# create simple GP model
-		self.model = gp.models.GPRegression(train_x, train_y, kernel)
+		self.model = gp.models.GPRegression(train_x, train_y, self.kernel)
 
 		# optimize
 		self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
