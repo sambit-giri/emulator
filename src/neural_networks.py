@@ -160,6 +160,7 @@ class DenseNet(nn.Module):
             epoch_start = len(self.losses)
             print('Found model which was run for {} epochs.'.format(epoch_start))
             print('To restart, run clear_model() before fitting.')
+            sleep(0.5)
 
         if self.optimizer=='Adam':
             self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
