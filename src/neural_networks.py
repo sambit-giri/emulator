@@ -1,7 +1,7 @@
 import numpy as np
 import pickle
 from . import helper_functions as hf
-from time import time
+from time import time, sleep
 from tqdm import tqdm
 
 from sklearn.model_selection import train_test_split
