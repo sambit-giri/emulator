@@ -156,6 +156,13 @@ class Fit_Function:
 		print('Model loaded.')
 
 
+def load_model(filename):
+	model = pickle.load(open(filename, 'rb'))
+	modelled_func = lambda x: model.predict(x[:,None] if x.ndim==1 else x)
+	print('Model loaded.')
+	return modelled_func
+
+
 class Fit_LassoCV(Fit_Function):
 	'''
 	Fitting a surrogate model using LASSO regression.
