@@ -3,13 +3,14 @@ scipy
 matplotlib
 astropy
 pyfftw
-scikit-learn
-scikit-image
 pyfits
 pyDOE
-scikit-optimize
-GPy
 
+scikit-learn
+scikit-image
+scikit-optimize
+
+GPy
 torch
 torchvision 
 torchaudio
