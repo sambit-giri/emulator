@@ -14,7 +14,7 @@ try: import probflow as pf
 except: print('Install probflow to use prob_nn.')
 
 try: from torch import nn
-except: print('Install PyTorch.")
+except: print('Install PyTorch.')
 
 
 class prob_DenseNN:
