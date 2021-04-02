@@ -10,10 +10,11 @@ from sklearn.metrics import mean_squared_error, r2_score
 try: import tensorflow as tf
 except: print('Install Tensorflow to use prob_nn.')
 
-try:
-	import probflow as pf
-except:
-	print('Install probflow to use prob_nn.')
+try: import probflow as pf
+except: print('Install probflow to use prob_nn.')
+
+try: from torch import nn
+except: print('Install PyTorch.")
 
 
 class prob_DenseNN:
