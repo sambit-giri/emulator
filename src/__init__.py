@@ -19,6 +19,7 @@ from .gaussian_process import *
 from .neural_networks import *
 from .sim2emul import *
 from .learn_functions import *
+from .dimension_reduction import * 
 
 #Suppress warnings from zero-divisions and nans
 import numpy
