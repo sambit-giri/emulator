@@ -46,7 +46,7 @@ class prob_DenseNN:
 
         callbacks = []
         if self.verbose:
-        	callbacks.append(pf.callbacks.MonitorMetric('mse', X_train, y_train))
+            callbacks.append(pf.callbacks.MonitorMetric('mse', X_train, y_train))
 
         self.model.fit(X_train, y_train, 
                 num_workers=self.n_jobs, 
