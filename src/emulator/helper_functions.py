@@ -14,3 +14,10 @@ def spherical_to_cartesian(theta):
 	x[-1] = x[-2]*np.tan(theta[-1])
 	return x
 
+def moving_average(data, window_size):
+    '''
+    Function to compute moving average
+    '''
+    cumsum = np.cumsum(data)
+    cumsum[window_size:] = cumsum[window_size:] - cumsum[:-window_size]
+    return cumsum[window_size - 1:] / window_size
