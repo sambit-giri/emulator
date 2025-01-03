@@ -254,28 +254,34 @@ def numpy_to_tensor(array):
 def tensor_to_numpy(tensor):
     return tensor.detach().cpu().numpy()
     
+class SineActivation(nn.Module):
+    def forward(self, x):
+        return torch.sin(x)
+
 class NNRegressor:
     def __init__(self, layers=[3, 32, 64, 16],
-                 dropout_prob=0.5, weight_decay=0,
-                 optimizer='Adam', loss_fn='MSE',
-                 learning_rate=1e-4, validation_size=0.2):
+                 activation_function='ReLU', dropout_prob=0.5,
+                 weight_decay=0, optimizer='Adam',
+                 loss_fn='MSE', learning_rate=1e-4,
+                 validation_size=0.2):
         self.layers = layers
+        self.activation_function = activation_function
         self.dropout_prob = dropout_prob
         self.weight_decay = weight_decay
         self.optimizer_name = optimizer
         self.loss_fn_name = loss_fn
         self.learning_rate = learning_rate
         self.validation_size = validation_size
-        
+
         # Model and normalization parameters
-        self.model = self.build_model(layers, dropout_prob)
+        self.model = self.build_model(layers, activation_function, dropout_prob)
         self.X_min, self.X_max = None, None
         self.y_min, self.y_max = None, None
-        
+
         # Tracking losses and additional data
         self.loss_history = []
         self.extra_data = None
-        
+
         # PCA attributes
         self.pca = None
         self.pca_n_components = None
@@ -284,15 +290,36 @@ class NNRegressor:
         self.current_epoch = 0
         self.optimizer_state = None
 
-    def build_model(self, layers, dropout_prob):
+    def build_model(self, layers, activation_function, dropout_prob):
         modules = []
+        activation_fn = self.get_activation_function(activation_function)
         for i in range(len(layers) - 1):
             modules.append(nn.Linear(layers[i], layers[i + 1]))
             if i < len(layers) - 2:  # Exclude activation and dropout for the output layer
-                modules.append(nn.ReLU())
+                modules.append(activation_fn)
                 if dropout_prob > 0:
                     modules.append(nn.Dropout(p=dropout_prob))
         return nn.Sequential(*modules)
+
+    def get_activation_function(self, name):
+        if isinstance(name, str):
+            name = name.lower()
+            if name == 'relu':
+                return nn.ReLU()
+            elif name == 'sigmoid':
+                return nn.Sigmoid()
+            elif name == 'tanh':
+                return nn.Tanh()
+            elif name == 'leakyrelu':
+                return nn.LeakyReLU()
+            elif name == 'sine':  # SIREN's sinusoidal activation
+                return SineActivation()
+            else:
+                raise ValueError(f"Unsupported activation function: {name}")
+        elif callable(name):
+            return name
+        else:
+            raise ValueError("Activation function must be a string or callable.")
 
     def fit(self, X, y, n_epochs=100, batch_size=10, learning_rate=None, continue_training=False):
         self.n_epochs = n_epochs
@@ -361,7 +388,7 @@ class NNRegressor:
                 best_model_state = self.model.state_dict()
 
             # Update tqdm description
-            progress_bar.set_description(f"Epoch {epoch + 1}/{n_epochs}, Val Loss: {test_loss:.2e}")
+            progress_bar.set_description(f"Epoch {epoch + 1}/{n_epochs}, Val Loss: {test_loss:.3e}")
 
         # Update state
         self.current_epoch += n_epochs
@@ -430,38 +457,5 @@ class NNRegressor:
         if self.pca is None:
             raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
         return self.pca.inverse_transform(X_transformed)
-    
-
-# SIREN layer definition
-class SirenLayer(nn.Module):
-    def __init__(self, in_features, out_features, w0=30.0, dropout_prob=0.5):
-        super(SirenLayer, self).__init__()
-        self.in_features = in_features
-        self.linear = nn.Linear(in_features, out_features)
-        self.dropout = nn.Dropout(dropout_prob)
-        self.w0 = w0
-
-    def forward(self, x):
-        y = self.linear(x)
-        y = self.dropout(y)  # Apply dropout
-        return torch.sin(self.w0 * y)
-
-# SIREN model definition
-class SirenModel(nn.Module):
-    def __init__(self, in_features, hidden_features, hidden_layers, out_features):
-        super(SirenModel, self).__init__()
-
-        layers = [SirenLayer(in_features, hidden_features)]
-        for _ in range(hidden_layers):
-            layers.append(SirenLayer(hidden_features, hidden_features))
-        layers.append(SirenLayer(hidden_features, out_features))
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
-    
-
-
 
 
