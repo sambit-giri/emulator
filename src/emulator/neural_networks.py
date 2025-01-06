@@ -6,8 +6,9 @@ from tqdm import tqdm
 from . import helper_functions as hf
 from .helper_functions import moving_average
 
+from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn import metrics
 
 try: import tensorflow as tf
 except: print('Install Tensorflow to use prob_nn.')
@@ -231,8 +232,6 @@ def load_model(filename):
 
 
 def metric_function(y_true, y_pred, metric='r2'):
-    from sklearn import metrics
-
     if type(metric)==str:
         assert metric in ['explained_variance_score', 'max_error', 
                           'mean_squared_error', 'mse', 'mean_squared_log_error',
@@ -241,7 +240,7 @@ def metric_function(y_true, y_pred, metric='r2'):
 
         if metric=='explained_variance_score': metric = metrics.explained_variance_score
         if metric=='max_error': metric = metrics.max_error
-        if metric==['mean_squared_error','mse']: metric = metrics.mean_squared_error
+        if metric in ['mean_squared_error','mse']: metric = metrics.mean_squared_error
         if metric=='mean_squared_log_error': metric = metrics.mean_squared_log_error
         if metric=='median_absolute_error': metric = metrics.median_absolute_error
         if metric in ['r2', 'r2_score']: metric = metrics.r2_score
@@ -253,6 +252,67 @@ def numpy_to_tensor(array):
 
 def tensor_to_numpy(tensor):
     return tensor.detach().cpu().numpy()
+
+class PowerMSELoss(nn.Module):
+    def __init__(self):
+        """
+        Custom loss combining MSE for 10**data.
+        """
+        super(PowerMSELoss, self).__init__()
+
+    def forward(self, y_pred, y_true):
+        # Compute 10**data MSE
+        power_mse = torch.mean(((10**y_pred) - (10**y_true))**2)
+        return power_mse
+
+class LogMSELoss(nn.Module):
+    def __init__(self):
+        """
+        Custom loss combining MSE for log10(data) and 10**data.
+        """
+        super(LogMSELoss, self).__init__()
+
+    def forward(self, y_pred, y_true):
+        # Avoid log of zero or negative values by ensuring positivity
+        epsilon = 1e-8
+        y_true_safe = y_true + epsilon
+        y_pred_safe = y_pred + epsilon
+        # Compute log10 MSE
+        log_mse = torch.mean((torch.log10(y_pred_safe) - torch.log10(y_true_safe))**2)
+        return log_mse
+    
+class LowKWeightedMSELoss(nn.Module):
+    def __init__(self, k_values, weight_decay_factor=2.0):
+        """
+        Custom loss function to prioritize fitting low k values.
+
+        Parameters:
+        - k_values (torch.Tensor): Tensor of k values corresponding to the predictions.
+        - weight_decay_factor (float): Exponential decay factor for weights. Larger values
+          will assign much higher weights to low k.
+        """
+        super(LowKWeightedMSELoss, self).__init__()
+        self.k_values = k_values
+        self.weight_decay_factor = weight_decay_factor
+
+        # Calculate weights based on k values
+        self.weights = 1.0 / (self.k_values ** self.weight_decay_factor)
+        self.weights /= self.weights.sum()  # Normalize weights to sum to 1
+
+    def forward(self, predictions, targets):
+        """
+        Compute the weighted MSE loss.
+
+        Parameters:
+        - predictions (torch.Tensor): Predicted power spectra.
+        - targets (torch.Tensor): True power spectra.
+
+        Returns:
+        - torch.Tensor: Weighted MSE loss.
+        """
+        mse = (predictions - targets) ** 2
+        weighted_mse = mse * self.weights  # Apply the weights
+        return weighted_mse.mean()
     
 class SineActivation(nn.Module):
     def forward(self, x):
@@ -263,34 +323,65 @@ class NNRegressor:
                  activation_function='ReLU', dropout_prob=0.5,
                  weight_decay=0, optimizer='Adam',
                  loss_fn='MSE', learning_rate=1e-4,
-                 validation_size=0.2):
+                 validation_size=0.2, X=None, y=None,
+                 n_pca_components_X=0, n_pca_components_y=0):
         self.layers = layers
         self.activation_function = activation_function
         self.dropout_prob = dropout_prob
         self.weight_decay = weight_decay
         self.optimizer_name = optimizer
-        self.loss_fn_name = loss_fn
         self.learning_rate = learning_rate
         self.validation_size = validation_size
+        self.n_pca_components_X = n_pca_components_X  # PCA for input features
+        self.n_pca_components_y = n_pca_components_y  # PCA for target variables
+
+        # Loss Function
+        if isinstance(loss_fn, str):
+            if loss_fn.lower() in ['mean_squared_error', 'mse']:
+                loss_fn = nn.MSELoss()
+            elif loss_fn.lower() in ['l1loss', 'l1']:
+                loss_fn = nn.L1Loss()
+            elif loss_fn.lower() in ['crossentropyloss']:
+                loss_fn = nn.CrossEntropyLoss()
+            elif loss_fn.lower() in ['power_mse']:
+                loss_fn = PowerMSELoss()
+            elif loss_fn.lower() in ['log_mse']:
+                loss_fn = LogMSELoss()
+            else:
+                raise ValueError(f"Unsupported loss function: {loss_fn}")
+        self.loss_fn = loss_fn
 
         # Model and normalization parameters
         self.model = self.build_model(layers, activation_function, dropout_prob)
-        self.X_min, self.X_max = None, None
-        self.y_min, self.y_max = None, None
+        if not (X is None and y is None):
+            self.X, self.y = X, y
+            self.X_min, self.X_max = X.min(axis=0), X.max(axis=0)
+            self.y_min, self.y_max = y.min(axis=0), y.max(axis=0)
+        else:
+            self.X, self.y = None, None
+            self.X_min, self.X_max = None, None
+            self.y_min, self.y_max = None, None
 
         # Tracking losses and additional data
         self.loss_history = []
         self.extra_data = None
 
         # PCA attributes
-        self.pca = None
-        self.pca_n_components = None
+        self.pca_X = None
+        self.pca_y = None
 
         # Training state
         self.current_epoch = 0
         self.optimizer_state = None
 
     def build_model(self, layers, activation_function, dropout_prob):
+        if self.n_pca_components_X>0:
+            layers[0] = self.n_pca_components_X
+            print(f'First layer replaced with {self.n_pca_components_X} to match the PCA transformed input (X) data.')
+        if self.n_pca_components_y>0:
+            layers[-1] = self.n_pca_components_y
+            print(f'Last layer replaced with {self.n_pca_components_y} to match the PCA transformed output (y) data.')
+
         modules = []
         activation_fn = self.get_activation_function(activation_function)
         for i in range(len(layers) - 1):
@@ -300,7 +391,7 @@ class NNRegressor:
                 if dropout_prob > 0:
                     modules.append(nn.Dropout(p=dropout_prob))
         return nn.Sequential(*modules)
-
+    
     def get_activation_function(self, name):
         if isinstance(name, str):
             name = name.lower()
@@ -320,12 +411,42 @@ class NNRegressor:
             return name
         else:
             raise ValueError("Activation function must be a string or callable.")
+    
+    def get_optimizer(self, optimizer_name, learning_rate, weight_decay):
+        if optimizer_name == 'Adam':
+            return optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        elif optimizer_name == 'RMSprop':
+            return optim.RMSprop(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        elif optimizer_name == 'Adagrad':
+            return optim.Adagrad(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
-    def fit(self, X, y, n_epochs=100, batch_size=10, learning_rate=None, continue_training=False):
+    def fit(self, X=None, y=None, n_epochs=100, batch_size=10, learning_rate=None, continue_training=False):
+        if X is None or y is None:
+            X, y = self.X, self.y 
+        assert not (X is None and y is None), "Provide the input (X) and output (y) data."
+
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         if learning_rate is not None:
             self.learning_rate = learning_rate
+
+        # Apply PCA to X if n_pca_components_X > 0
+        if self.n_pca_components_X > 0:
+            print('Applying PCA to X...')
+            if not self.pca_X:
+                self.pca_X = self.PCA_fit(X, self.n_pca_components_X)
+            X = self.PCA_transform(X, self.pca_X) 
+            print('...done')
+
+        # Apply PCA to y if n_pca_components_y > 0
+        if self.n_pca_components_y > 0:
+            print('Applying PCA to y...')
+            if not self.pca_y:
+                self.pca_y = self.PCA_fit(y, self.n_pca_components_y)
+            y = self.PCA_transform(y, self.pca_y)
+            print('...done')
 
         # Normalize data
         if not continue_training:
@@ -341,7 +462,7 @@ class NNRegressor:
         X_test, y_test = numpy_to_tensor(X_test), numpy_to_tensor(y_test)
 
         # Loss function
-        loss_fn = nn.MSELoss() if self.loss_fn_name.lower() == 'mse' else self.loss_fn_name
+        loss_fn = self.loss_fn
 
         # Optimizer
         optimizer = self.get_optimizer(self.optimizer_name, self.learning_rate, self.weight_decay)
@@ -397,24 +518,44 @@ class NNRegressor:
         # Load the best model weights
         self.model.load_state_dict(best_model_state)
 
-    def get_optimizer(self, optimizer_name, learning_rate, weight_decay):
-        if optimizer_name == 'Adam':
-            return optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        elif optimizer_name == 'RMSprop':
-            return optim.RMSprop(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        elif optimizer_name == 'Adagrad':
-            return optim.Adagrad(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
-
     def predict(self, X):
+        # Normalize input features
+        if self.n_pca_components_X > 0 and self.pca_X is not None:
+            X = self.PCA_transform(X, self.pca_X)
         X_normed = (X - self.X_min) / (self.X_max - self.X_min)
+
         X_tensor = numpy_to_tensor(X_normed)
         self.model.eval()
+
         with torch.no_grad():
             y_pred = self.model(X_tensor)
-        return tensor_to_numpy(y_pred) * (self.y_max - self.y_min) + self.y_min
 
+        y_pred_numpy = tensor_to_numpy(y_pred)
+
+        # Rescale predictions to original range
+        y_pred_numpy = y_pred_numpy * (self.y_max - self.y_min) + self.y_min
+
+        # Inverse transform PCA for predictions, if applicable
+        if self.n_pca_components_y > 0 and self.pca_y is not None:
+            y_pred_numpy = self.PCA_inverse_transform(y_pred_numpy, self.pca_y)
+
+        return y_pred_numpy
+
+    def PCA_fit(self, data, n_components=32):
+        pca = PCA(n_components=n_components)
+        pca.fit(data)
+        return pca
+
+    def PCA_transform(self, data, pca):
+        if pca is None:
+            raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
+        return pca.transform(data)
+
+    def PCA_inverse_transform(self, data_transformed, pca):
+        if pca is None:
+            raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
+        return pca.inverse_transform(data_transformed)
+    
     def save_model(self, filepath):
         save_data = {
             'model_state_dict': self.model.state_dict(),
@@ -424,9 +565,11 @@ class NNRegressor:
             'y_max': self.y_max,
             'loss_history': self.loss_history,
             'extra_data': self.extra_data,
-            'pca': self.pca,
-            'pca_n_components': self.pca_n_components,
-            }
+            'pca_X': self.pca_X,
+            'pca_y': self.pca_y,
+            'n_pca_components_X': self.n_pca_components_X,
+            'n_pca_components_y': self.n_pca_components_y,
+        }
         torch.save(save_data, filepath)
 
     def load_model(self, filepath):
@@ -438,24 +581,8 @@ class NNRegressor:
         self.y_max = checkpoint['y_max']
         self.loss_history = checkpoint['loss_history']
         self.extra_data = checkpoint['extra_data']
-        self.pca = checkpoint['pca']
-        self.pca_n_components = checkpoint['pca_n_components']
-
-    def PCA_fit(self, X, n_components=32):
-        from sklearn.decomposition import PCA
-        self.pca = PCA(n_components=n_components)
-        self.pca.fit(X)
-        self.pca_n_components = n_components
-        return self.pca
-
-    def PCA_transform(self, X):
-        if self.pca is None:
-            raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
-        return self.pca.transform(X)
-
-    def PCA_inverse_transform(self, X_transformed):
-        if self.pca is None:
-            raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
-        return self.pca.inverse_transform(X_transformed)
-
+        self.pca_X = checkpoint.get('pca_X', None)
+        self.pca_y = checkpoint.get('pca_y', None)
+        self.n_pca_components_X = checkpoint.get('n_pca_components_X', 0)
+        self.n_pca_components_y = checkpoint.get('n_pca_components_y', 0)
 
