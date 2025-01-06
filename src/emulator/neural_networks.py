@@ -363,7 +363,8 @@ class NNRegressor:
             self.y_min, self.y_max = None, None
 
         # Tracking losses and additional data
-        self.loss_history = []
+        self.train_loss_history = []
+        self.val_loss_history = []
         self.extra_data = None
 
         # PCA attributes
@@ -424,7 +425,7 @@ class NNRegressor:
 
     def fit(self, X=None, y=None, n_epochs=100, batch_size=10, learning_rate=None, continue_training=False):
         if X is None or y is None:
-            X, y = self.X, self.y 
+            X, y = self.X, self.y
         assert not (X is None and y is None), "Provide the input (X) and output (y) data."
 
         self.n_epochs = n_epochs
@@ -437,7 +438,7 @@ class NNRegressor:
             print('Applying PCA to X...')
             if not self.pca_X:
                 self.pca_X = self.PCA_fit(X, self.n_pca_components_X)
-            X = self.PCA_transform(X, self.pca_X) 
+            X = self.PCA_transform(X, self.pca_X)
             print('...done')
 
         # Apply PCA to y if n_pca_components_y > 0
@@ -469,8 +470,12 @@ class NNRegressor:
         if continue_training and self.optimizer_state is not None:
             optimizer.load_state_dict(self.optimizer_state)
 
+        # Tracking loss history for training and validation
+        self.train_loss_history = [] if not continue_training else self.train_loss_history
+        self.val_loss_history = [] if not continue_training else self.val_loss_history
+
         # Training loop
-        best_loss = float('inf') if not continue_training else self.loss_history[-1]
+        best_loss = float('inf') if not continue_training else self.val_loss_history[-1]
         best_model_state = None if not continue_training else self.model.state_dict()
 
         # Progress bar with tqdm
@@ -478,7 +483,7 @@ class NNRegressor:
 
         for epoch in progress_bar:
             self.model.train()
-            epoch_loss = 0.0
+            epoch_train_loss = 0.0
 
             # Batch training
             indices = torch.randperm(X_train.size(0))
@@ -495,7 +500,10 @@ class NNRegressor:
                 loss.backward()
                 optimizer.step()
 
-                epoch_loss += loss.item()
+                epoch_train_loss += loss.item()
+
+            epoch_train_loss /= len(X_train) / batch_size
+            self.train_loss_history.append(epoch_train_loss)
 
             # Evaluation on validation data
             self.model.eval()
@@ -503,13 +511,13 @@ class NNRegressor:
                 y_pred = self.model(X_test)
                 test_loss = loss_fn(y_pred, y_test).item()
 
-            self.loss_history.append(test_loss)
+            self.val_loss_history.append(test_loss)
             if test_loss < best_loss:
                 best_loss = test_loss
                 best_model_state = self.model.state_dict()
 
             # Update tqdm description
-            progress_bar.set_description(f"Epoch {epoch + 1}/{n_epochs}, Val Loss: {test_loss:.3e}")
+            progress_bar.set_description(f"Epoch {epoch + 1}/{n_epochs}, Train Loss: {epoch_train_loss:.3e}, Val Loss: {test_loss:.3e}")
 
         # Update state
         self.current_epoch += n_epochs
