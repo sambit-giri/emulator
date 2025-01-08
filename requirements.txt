@@ -3,7 +3,6 @@ scipy
 matplotlib
 astropy
 pyfftw
-### pyfits
 pyDOE
 
 scikit-learn
@@ -14,3 +13,5 @@ GPy
 torch
 torchvision 
 torchaudio
+lightning
+# optuna

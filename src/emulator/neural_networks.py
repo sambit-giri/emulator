@@ -1,7 +1,8 @@
 import numpy as np
-import pickle, copy
+import pickle, copy, os
 from time import time, sleep
 from tqdm import tqdm
+# from tqdm.auto import tqdm
 
 from . import helper_functions as hf
 from .helper_functions import moving_average
@@ -20,8 +21,29 @@ try:
     import torch
     from torch import nn 
     import torch.optim as optim
+    from torch.utils.data import DataLoader, TensorDataset, random_split
 except: 
     print('Install PyTorch.')
+
+try:
+    import pytorch_lightning as pl
+    from pytorch_lightning import Trainer
+except: 
+    print('Install PyTorch-lightning.')
+
+def PCA_fit(data, n_components):
+    """Fits PCA on the data."""
+    pca = PCA(n_components=n_components)
+    pca.fit(data)
+    return pca
+
+def PCA_transform(data, pca):
+    """Transforms data using the fitted PCA."""
+    return pca.transform(data)
+
+def PCA_inverse_transform(data_transformed, pca):
+    """Inverse transforms the PCA-transformed data."""
+    return pca.inverse_transform(data_transformed)
 
 
 class prob_DenseNN:
@@ -321,15 +343,16 @@ class SineActivation(nn.Module):
 class NNRegressor:
     def __init__(self, layers=[3, 32, 64, 16],
                  activation_function='ReLU', dropout_prob=0.5,
-                 weight_decay=0, optimizer='Adam',
+                 weight_decay=0, optimizer_name='Adam',
                  loss_fn='MSE', learning_rate=1e-4,
                  validation_size=0.2, X=None, y=None,
+                 filename=None, retrain=False,
                  n_pca_components_X=0, n_pca_components_y=0):
         self.layers = layers
         self.activation_function = activation_function
         self.dropout_prob = dropout_prob
         self.weight_decay = weight_decay
-        self.optimizer_name = optimizer
+        self.optimizer_name = optimizer_name
         self.learning_rate = learning_rate
         self.validation_size = validation_size
         self.n_pca_components_X = n_pca_components_X  # PCA for input features
@@ -374,6 +397,16 @@ class NNRegressor:
         # Training state
         self.current_epoch = 0
         self.optimizer_state = None
+
+        # Load Model
+        self.filename = filename
+        self.retrain = retrain
+        if self.filename is not None and not self.retrain:
+            if os.path.isfile(self.filename):
+                self.load_model(self.filename)
+                print(f'A file named {self.filename} was found and loaded.')
+            else:
+                print(f'A new file named {self.filename} will be created.')
 
     def build_model(self, layers, activation_function, dropout_prob):
         if self.n_pca_components_X>0:
@@ -437,16 +470,16 @@ class NNRegressor:
         if self.n_pca_components_X > 0:
             print('Applying PCA to X...')
             if not self.pca_X:
-                self.pca_X = self.PCA_fit(X, self.n_pca_components_X)
-            X = self.PCA_transform(X, self.pca_X)
+                self.pca_X = PCA_fit(X, self.n_pca_components_X)
+            X = PCA_transform(X, self.pca_X)
             print('...done')
 
         # Apply PCA to y if n_pca_components_y > 0
         if self.n_pca_components_y > 0:
             print('Applying PCA to y...')
             if not self.pca_y:
-                self.pca_y = self.PCA_fit(y, self.n_pca_components_y)
-            y = self.PCA_transform(y, self.pca_y)
+                self.pca_y = PCA_fit(y, self.n_pca_components_y)
+            y = PCA_transform(y, self.pca_y)
             print('...done')
 
         # Normalize data
@@ -526,6 +559,9 @@ class NNRegressor:
         # Load the best model weights
         self.model.load_state_dict(best_model_state)
 
+        # Save model
+        self.save_model(self.filename)
+
     def predict(self, X):
         # Normalize input features
         if self.n_pca_components_X > 0 and self.pca_X is not None:
@@ -548,21 +584,6 @@ class NNRegressor:
             y_pred_numpy = self.PCA_inverse_transform(y_pred_numpy, self.pca_y)
 
         return y_pred_numpy
-
-    def PCA_fit(self, data, n_components=32):
-        pca = PCA(n_components=n_components)
-        pca.fit(data)
-        return pca
-
-    def PCA_transform(self, data, pca):
-        if pca is None:
-            raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
-        return pca.transform(data)
-
-    def PCA_inverse_transform(self, data_transformed, pca):
-        if pca is None:
-            raise ValueError("PCA has not been fitted. Call `PCA_fit` first.")
-        return pca.inverse_transform(data_transformed)
     
     def save_model(self, filepath):
         save_data = {
@@ -571,7 +592,8 @@ class NNRegressor:
             'X_max': self.X_max,
             'y_min': self.y_min,
             'y_max': self.y_max,
-            'loss_history': self.loss_history,
+            'train_loss_history': self.train_loss_history,
+            'val_loss_history': self.val_loss_history,
             'extra_data': self.extra_data,
             'pca_X': self.pca_X,
             'pca_y': self.pca_y,
@@ -587,10 +609,199 @@ class NNRegressor:
         self.X_max = checkpoint['X_max']
         self.y_min = checkpoint['y_min']
         self.y_max = checkpoint['y_max']
-        self.loss_history = checkpoint['loss_history']
+        self.train_loss_history = checkpoint['train_loss_history']
+        self.val_loss_history = checkpoint['val_loss_history']
         self.extra_data = checkpoint['extra_data']
         self.pca_X = checkpoint.get('pca_X', None)
         self.pca_y = checkpoint.get('pca_y', None)
         self.n_pca_components_X = checkpoint.get('n_pca_components_X', 0)
         self.n_pca_components_y = checkpoint.get('n_pca_components_y', 0)
 
+class NNRegressorPL(pl.LightningModule):
+    def __init__(self, 
+                 layers=[3, 32, 64, 16],
+                 activation_function='ReLU', 
+                 dropout_prob=0.5,
+                 weight_decay=0,
+                 optimizer_name='Adam',
+                 loss_fn='MSE', 
+                 learning_rate=1e-4,
+                 validation_size=0.2,
+                 filename=None, retrain=False,
+                 n_pca_components_X=0, 
+                 n_pca_components_y=0,
+                 X=None, y=None):
+        super().__init__()
+        
+        self.save_hyperparameters()
+
+        self.layers = layers
+        self.activation_function = activation_function
+        self.dropout_prob = dropout_prob
+        self.weight_decay = weight_decay
+        self.optimizer_name = optimizer_name
+        self.learning_rate = learning_rate
+        self.validation_size = validation_size
+        self.n_pca_components_X = n_pca_components_X
+        self.n_pca_components_y = n_pca_components_y
+
+        # Loss Function
+        self.loss_fn = self.get_loss_function(loss_fn)
+
+        # Build Model
+        self.model = self.build_model(layers, activation_function, dropout_prob)
+
+        # PCA components
+        self.pca_X = None
+        self.pca_y = None
+
+        # For normalization
+        if X is not None and y is not None:
+            self.X, self.y = X, y
+            self.X_min, self.X_max = X.min(axis=0), X.max(axis=0)
+            self.y_min, self.y_max = y.min(axis=0), y.max(axis=0)
+
+        # Load Model
+        self.filename = filename
+        self.retrain = retrain
+        if self.filename is not None and not self.retrain:
+            if os.path.isfile(self.filename):
+                self.load_from_checkpoint(self.filename)
+                print(f'A file named {self.filename} was found and loaded.')
+            else:
+                print(f'A new file named {self.filename} will be created.')
+
+    def build_model(self, layers, activation_function, dropout_prob):
+        if self.n_pca_components_X > 0:
+            layers[0] = self.n_pca_components_X
+        if self.n_pca_components_y > 0:
+            layers[-1] = self.n_pca_components_y
+
+        modules = []
+        activation_fn = self.get_activation_function(activation_function)
+        for i in range(len(layers) - 1):
+            modules.append(nn.Linear(layers[i], layers[i + 1]))
+            if i < len(layers) - 2:  # No activation/dropout for output layer
+                modules.append(activation_fn)
+                if dropout_prob > 0:
+                    modules.append(nn.Dropout(p=dropout_prob))
+        return nn.Sequential(*modules)
+
+    def get_activation_function(self, name):
+        activations = {
+            'relu': nn.ReLU,
+            'sigmoid': nn.Sigmoid,
+            'tanh': nn.Tanh,
+            'leakyrelu': nn.LeakyReLU
+        }
+        if name.lower() in activations:
+            return activations[name.lower()]()
+        else:
+            raise ValueError(f"Unsupported activation function: {name}")
+
+    def get_loss_function(self, loss_fn):
+        losses = {
+            'mse': nn.MSELoss,
+            'l1': nn.L1Loss,
+            'crossentropy': nn.CrossEntropyLoss
+        }
+        if isinstance(loss_fn, str):
+            loss_fn = loss_fn.lower()
+            if loss_fn in losses:
+                return losses[loss_fn]()
+            else:
+                raise ValueError(f"Unsupported loss function: {loss_fn}")
+        return loss_fn
+
+    def configure_optimizers(self):
+        optimizers = {
+            'adam': optim.Adam,
+            'rmsprop': optim.RMSprop,
+            'adagrad': optim.Adagrad
+        }
+        if self.optimizer_name.lower() in optimizers:
+            return optimizers[self.optimizer_name.lower()](
+                self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer: {self.optimizer_name}")
+
+    def forward(self, x):
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_pred = self(x)
+        loss = self.loss_fn(y_pred, y)
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_pred = self(x)
+        loss = self.loss_fn(y_pred, y)
+        self.log("val_loss", loss, prog_bar=True)
+        return loss
+
+    def setup(self, stage=None):
+        pass
+
+    def fit(self, X, y, trainer, batch_size=32):
+        # Apply PCA if specified
+        if self.n_pca_components_X > 0:
+            self.pca_X = self.PCA_fit(X, self.n_pca_components_X)
+            X = self.PCA_transform(X, self.pca_X)
+        if self.n_pca_components_y > 0:
+            self.pca_y = self.PCA_fit(y, self.n_pca_components_y)
+            y = self.PCA_transform(y, self.pca_y)
+
+        # Normalize data
+        self.X_min, self.X_max = X.min(axis=0), X.max(axis=0)
+        self.y_min, self.y_max = y.min(axis=0), y.max(axis=0)
+        X_normed = (X - self.X_min) / (self.X_max - self.X_min)
+        y_normed = (y - self.y_min) / (self.y_max - self.y_min)
+
+        # Create datasets
+        dataset = TensorDataset(torch.tensor(X_normed, dtype=torch.float32),
+                                torch.tensor(y_normed, dtype=torch.float32))
+        train_size = int(len(dataset) * (1.0 - self.validation_size))
+        val_size = len(dataset) - train_size
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+
+        # Fit the model using PyTorch Lightning Trainer
+        trainer.fit(self)
+
+        # Save model
+        self.save_checkpoint(self.filename)
+
+    def predict(self, X):
+        # Apply PCA transformation
+        if self.n_pca_components_X > 0 and self.pca_X is not None:
+            X = self.PCA_transform(X, self.pca_X)
+
+        # Normalize input
+        X_normed = (X - self.X_min) / (self.X_max - self.X_min)
+        X_tensor = torch.tensor(X_normed, dtype=torch.float32)
+
+        # Generate predictions
+        self.model.eval()
+        with torch.no_grad():
+            y_pred = self(X_tensor).numpy()
+
+        # Rescale predictions
+        y_pred_rescaled = y_pred * (self.y_max - self.y_min) + self.y_min
+
+        # Inverse PCA transformation
+        if self.n_pca_components_y > 0 and self.pca_y is not None:
+            y_pred_rescaled = self.PCA_inverse_transform(y_pred_rescaled, self.pca_y)
+
+        return y_pred_rescaled
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=32, shuffle=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=32)
